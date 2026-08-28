@@ -94,6 +94,9 @@ import com.fuellog.app.domain.priceDisplayUnit
 import com.fuellog.app.domain.priceUnit
 import com.fuellog.app.domain.quantityUnit
 import com.fuellog.app.domain.canChangeVehicleEnergyType
+import com.fuellog.app.domain.RangeEstimate
+import com.fuellog.app.domain.calculateRangeEstimate
+import com.fuellog.app.domain.validateEnergyCapacity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.DecimalFormat
@@ -548,6 +551,7 @@ private fun NavHostController.navigateOnce(route: String) {
 @Composable private fun VehicleRenameDialog(vehicle: Vehicle, vm: MainViewModel, onDismiss: () -> Unit) {
     var name by remember(vehicle.id) { mutableStateOf(vehicle.name) }
     var energyType by remember(vehicle.id) { mutableStateOf(vehicle.energyType) }
+    var capacity by remember(vehicle.id) { mutableStateOf(vehicle.energyCapacity?.let(::plain) ?: "") }
     var error by remember(vehicle.id) { mutableStateOf<String?>(null) }
     var recordCount by remember(vehicle.id) { mutableStateOf<Int?>(null) }
     var confirmVisible by remember(vehicle.id) { mutableStateOf(false) }
@@ -559,19 +563,12 @@ private fun NavHostController.navigateOnce(route: String) {
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             title = { Text("确认修改车辆信息？") },
             text = {
-                Text(
-                    when {
-                        vehicle.name != name.trim() && vehicle.energyType != energyType ->
-                            "确认将车辆名称修改为「${name.trim()}」，并将车辆类型修改为${energyType.displayName()}？"
-                        vehicle.energyType != energyType -> "确认将车辆类型修改为${energyType.displayName()}？"
-                        else -> "确认将车辆名称修改为「${name.trim()}」？"
-                    }
-                )
+                Text(vehicleChangeSummary(vehicle, name.trim(), energyType, parseOptionalCapacity(capacity)))
             },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        error = vm.updateVehicle(vehicle, name, energyType)
+                        error = vm.updateVehicle(vehicle, name, energyType, parseOptionalCapacity(capacity))
                         if (error == null) onDismiss() else confirmVisible = false
                     }
                 }) { Text("确认修改") }
@@ -590,8 +587,13 @@ private fun NavHostController.navigateOnce(route: String) {
                 EnergyTypeSelector(
                     selected = energyType,
                     enabled = recordCount?.let(::canChangeVehicleEnergyType) == true,
-                    onSelected = { energyType = it; error = null }
+                    onSelected = {
+                        if (it != energyType) capacity = ""
+                        energyType = it
+                        error = null
+                    }
                 )
+                VehicleCapacityField(capacity, { capacity = it; error = null }, energyType)
                 if (recordCount != null && recordCount != 0) {
                     Text("已有记录，车辆类型不可修改", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -602,7 +604,9 @@ private fun NavHostController.navigateOnce(route: String) {
             TextButton(onClick = {
                 when {
                     name.trim().isEmpty() -> error = "请输入车辆名称。"
-                    name.trim() == vehicle.name && energyType == vehicle.energyType -> error = "没有需要保存的修改。"
+                    validateCapacityInput(capacity) != null -> error = validateCapacityInput(capacity)
+                    name.trim() == vehicle.name && energyType == vehicle.energyType &&
+                        parseOptionalCapacity(capacity) == vehicle.energyCapacity -> error = "没有需要保存的修改。"
                     else -> confirmVisible = true
                 }
             }) { Text("保存") }
@@ -711,6 +715,48 @@ private fun NavHostController.navigateOnce(route: String) {
     OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, suffix = { Text(suffix) }, singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), shape = RoundedCornerShape(14.dp))
 }
+
+@Composable private fun VehicleCapacityField(
+    value: String,
+    onChange: (String) -> Unit,
+    energyType: EnergyType
+) = Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    NumberField(
+        value,
+        onChange,
+        if (energyType == EnergyType.FUEL) "油箱容量（可选）" else "电池容量（可选）",
+        energyType.quantityUnit()
+    )
+    Text(
+        if (energyType == EnergyType.FUEL) "用于续航估算" else "建议填写车辆实际可用容量",
+        fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+private fun parseOptionalCapacity(value: String): Double? =
+    value.trim().takeIf(String::isNotEmpty)?.toDoubleOrNull()
+
+private fun validateCapacityInput(value: String): String? {
+    if (value.isBlank()) return null
+    val capacity = value.trim().toDoubleOrNull() ?: return "请输入有效的能源容量。"
+    return validateEnergyCapacity(capacity)
+}
+
+private fun vehicleChangeSummary(
+    vehicle: Vehicle,
+    name: String,
+    energyType: EnergyType,
+    energyCapacity: Double?
+): String = buildList {
+    if (vehicle.name != name) add("车辆名称：${vehicle.name} → $name")
+    if (vehicle.energyType != energyType) add("车辆类型：${vehicle.energyType.displayName()} → ${energyType.displayName()}")
+    if (vehicle.energyCapacity != energyCapacity) {
+        val oldCapacity = vehicle.energyCapacity?.let { "${plain(it)} ${vehicle.energyType.quantityUnit()}" } ?: "未设置"
+        val newCapacity = energyCapacity?.let { "${plain(it)} ${energyType.quantityUnit()}" } ?: "未设置"
+        add("能源容量：$oldCapacity → $newCapacity")
+    }
+}.joinToString("\n")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun AddRecord(state: AppState, vm: MainViewModel, back: () -> Unit) {
@@ -1368,11 +1414,15 @@ private fun recordChangeSummary(original: FuelRecord, edited: FuelRecord, energy
 }
 
 @Composable private fun VehicleStatisticsPage(state: AppState, back: () -> Unit) {
-    val energyType = state.activeVehicle?.energyType ?: EnergyType.FUEL
+    val activeVehicle = state.activeVehicle
+    val energyType = activeVehicle?.energyType ?: EnergyType.FUEL
     BackHandler(onBack = back)
     SidePageSwipeBack(returnDirection = 1f, back = back) {
         val records = state.records.map { it.record }
         val statistics = remember(records) { calculateVehicleStatistics(records) }
+        val rangeEstimate = remember(activeVehicle?.id, activeVehicle?.energyCapacity, records) {
+            calculateRangeEstimate(activeVehicle?.energyCapacity, records)
+        }
         BoxWithConstraints(
             Modifier
                 .fillMaxSize()
@@ -1384,19 +1434,80 @@ private fun recordChangeSummary(original: FuelRecord, edited: FuelRecord, energy
                 Modifier.fillMaxWidth().height(maxHeight).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.Center
             ) {
-                if (state.activeVehicle == null) {
+                if (activeVehicle == null) {
                     Text("还没有车辆。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else if (statistics.recordCount == 0) {
-                    Text(if (energyType == EnergyType.FUEL) "暂无加油记录" else "暂无充电记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatisticsGrid(statistics, energyType)
+                        if (statistics.recordCount == 0) {
+                            Text(if (energyType == EnergyType.FUEL) "暂无加油记录" else "暂无充电记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            StatisticsGrid(statistics, energyType)
+                        }
+                        RangeEstimateSection(rangeEstimate, activeVehicle)
                         FuelPriceTrend(statistics.recentPriceSeries, energyType)
                     }
                 }
             }
         }
     }
+}
+
+@Composable private fun RangeEstimateSection(estimate: RangeEstimate, vehicle: Vehicle) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text("续航估算", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        when (estimate) {
+            RangeEstimate.MissingCapacity -> Text(
+                if (vehicle.energyType == EnergyType.FUEL) "设置油箱容量后生成" else "设置电池容量后生成",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium
+            )
+            is RangeEstimate.InsufficientData -> {
+                Text("数据不足", fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                Text("再记录几次完整补能后生成", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            is RangeEstimate.TypicalOnly -> {
+                Text("典型续航", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${estimate.typicalKm} km", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "数据较少 · 基于 ${estimate.sampleCount} 个有效区间 · ${capacitySummary(vehicle)}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            is RangeEstimate.FullEstimate -> {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RangeValue("保守", estimate.conservativeKm, false, Modifier.weight(1f))
+                    RangeValue("典型", estimate.typicalKm, true, Modifier.weight(1f))
+                    RangeValue("理想", estimate.idealKm, false, Modifier.weight(1f))
+                }
+                Text(
+                    "基于最近 ${estimate.sampleCount} 个有效区间 · ${capacitySummary(vehicle)}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable private fun RangeValue(label: String, km: Long, emphasized: Boolean, modifier: Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "$km km",
+            fontSize = if (emphasized) 21.sp else 19.sp,
+            fontWeight = if (emphasized) FontWeight.SemiBold else FontWeight.Medium
+        )
+    }
+}
+
+private fun capacitySummary(vehicle: Vehicle): String {
+    val capacity = vehicle.energyCapacity ?: return "容量未设置"
+    return if (vehicle.energyType == EnergyType.FUEL) "油箱 ${one(capacity)} L"
+    else "电池 ${one(capacity)} kWh"
 }
 
 @Composable private fun StatisticsGrid(statistics: com.fuellog.app.domain.VehicleStatistics, energyType: EnergyType) {
@@ -1526,11 +1637,13 @@ private fun recordChangeSummary(original: FuelRecord, edited: FuelRecord, energy
     var versionTapState by remember { mutableStateOf(VersionTapState()) }
     var name by remember { mutableStateOf("") }
     var energyType by remember { mutableStateOf(EnergyType.FUEL) }
+    var capacity by remember { mutableStateOf("") }
+    var addError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     SidePageSwipeBack(returnDirection = -1f, back = back) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             BoxWithConstraints(Modifier.weight(1f)) {
-                val estimatedContentHeight = 126.dp + 78.dp * state.vehicles.size
+                val estimatedContentHeight = 214.dp + 78.dp * state.vehicles.size
                 val topPadding = ((maxHeight - estimatedContentHeight) / 2).coerceAtLeast(0.dp)
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -1541,9 +1654,26 @@ private fun recordChangeSummary(original: FuelRecord, edited: FuelRecord, energy
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 OutlinedTextField(name, { name = it }, Modifier.weight(1f), label = { Text("车辆名称") }, singleLine = true, shape = RoundedCornerShape(14.dp))
-                                EnergyTypeSelector(energyType, enabled = true) { energyType = it }
+                                EnergyTypeSelector(energyType, enabled = true) {
+                                    if (it != energyType) capacity = ""
+                                    energyType = it
+                                    addError = null
+                                }
                             }
-                            Button({ vm.addVehicle(name, energyType); name = ""; energyType = EnergyType.FUEL }, Modifier.fillMaxWidth(), enabled = name.isNotBlank()) {
+                            VehicleCapacityField(capacity, { capacity = it; addError = null }, energyType)
+                            addError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                            Button({
+                                val inputError = validateCapacityInput(capacity)
+                                if (inputError != null) addError = inputError
+                                else scope.launch {
+                                    addError = vm.addVehicle(name, energyType, parseOptionalCapacity(capacity))
+                                    if (addError == null) {
+                                        name = ""
+                                        energyType = EnergyType.FUEL
+                                        capacity = ""
+                                    }
+                                }
+                            }, Modifier.fillMaxWidth(), enabled = name.isNotBlank()) {
                                 Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(6.dp)); Text("添加车辆")
                             }
                         }
@@ -1616,6 +1746,7 @@ private fun recordChangeSummary(original: FuelRecord, edited: FuelRecord, energy
 private data class VersionHistory(val version: String, val changes: List<String>)
 
 private val versionHistory = listOf(
+    VersionHistory("v2.1.0", listOf("新增油箱/电池容量与续航估算功能")),
     VersionHistory("v2.0.3", listOf("优化平均补能间隔统计，降低偶发漏记对结果的影响")),
     VersionHistory("v2.0.2", listOf("品牌名称更新为油电猫饼，并启用全新应用图标")),
     VersionHistory("v2.0.1", listOf("主页当前车辆名称改为纯文本显示")),

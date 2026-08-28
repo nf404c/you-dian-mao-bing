@@ -8,6 +8,7 @@ import com.fuellog.app.domain.Consumption
 import com.fuellog.app.domain.RecordWithConsumption
 import com.fuellog.app.domain.RecordEnergyType
 import com.fuellog.app.domain.canChangeVehicleEnergyType
+import com.fuellog.app.domain.validateEnergyCapacity
 import com.fuellog.app.domain.isFutureLocalDate
 import com.fuellog.app.domain.validateNewRecord
 import com.fuellog.app.domain.validateRecordEdit
@@ -58,19 +59,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putLong("active_vehicle_id", id).apply()
     }
 
-    fun addVehicle(name: String, energyType: EnergyType = EnergyType.FUEL) = viewModelScope.launch {
-        val clean = name.trim()
-        if (clean.isNotEmpty()) selectVehicle(dao.insertVehicle(Vehicle(name = clean, energyType = energyType)))
-    }
-
-    suspend fun updateVehicle(vehicle: Vehicle, name: String, energyType: EnergyType): String? {
+    suspend fun addVehicle(
+        name: String,
+        energyType: EnergyType = EnergyType.FUEL,
+        energyCapacity: Double? = null
+    ): String? {
         val clean = name.trim()
         if (clean.isEmpty()) return "请输入车辆名称。"
+        validateEnergyCapacity(energyCapacity)?.let { return it }
+        selectVehicle(dao.insertVehicle(Vehicle(
+            name = clean,
+            energyType = energyType,
+            energyCapacity = energyCapacity
+        )))
+        return null
+    }
+
+    suspend fun updateVehicle(
+        vehicle: Vehicle,
+        name: String,
+        energyType: EnergyType,
+        energyCapacity: Double?
+    ): String? {
+        val clean = name.trim()
+        if (clean.isEmpty()) return "请输入车辆名称。"
+        validateEnergyCapacity(energyCapacity)?.let { return it }
         val current = dao.vehicleOnce(vehicle.id) ?: return "车辆不存在。"
         if (current.energyType != energyType && !canChangeVehicleEnergyType(dao.recordCount(vehicle.id))) {
             return "已有记录，车辆类型不可修改。"
         }
-        if (dao.updateVehicleInfo(vehicle.id, clean, energyType) != 1) {
+        if (dao.updateVehicleInfo(vehicle.id, clean, energyType, energyCapacity) != 1) {
             return "已有记录，车辆类型不可修改。"
         }
         return null

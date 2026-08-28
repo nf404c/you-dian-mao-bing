@@ -85,11 +85,12 @@ class VehicleSelectionTest {
     }
 
     @Test fun vehicleRenameCopyKeepsItsIdentityAndCreationTime() {
-        val original = Vehicle(id = 42, name = "旧名称", createdAt = 123L)
-        val updated = original.copy(name = "新名称")
+        val original = Vehicle(id = 42, name = "旧名称", createdAt = 123L, energyCapacity = 8.0)
+        val updated = original.copy(name = "新名称", energyCapacity = 8.5)
 
         assertEquals(42L, updated.id)
         assertEquals(123L, updated.createdAt)
         assertEquals("新名称", updated.name)
+        assertEquals(8.5, updated.energyCapacity!!, 0.001)
     }
 }

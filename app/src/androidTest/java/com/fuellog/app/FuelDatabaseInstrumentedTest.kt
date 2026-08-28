@@ -23,12 +23,13 @@ class FuelDatabaseInstrumentedTest {
             val vehicleId = dao.insertVehicle(Vehicle(name = "旧名称", createdAt = 123L))
             dao.insertRecord(FuelRecord(vehicleId = vehicleId, odometerKm = 100.0, fuelGrade = "95", pricePerLiter = 8.0, amountPaid = 48.0, liters = 6.0))
 
-            assertEquals(1, dao.updateVehicleInfo(vehicleId, "新名称", EnergyType.FUEL))
+            assertEquals(1, dao.updateVehicleInfo(vehicleId, "新名称", EnergyType.FUEL, 8.0))
 
             val updated = dao.vehiclesOnce().single()
             assertEquals(vehicleId, updated.id)
             assertEquals("新名称", updated.name)
             assertEquals(123L, updated.createdAt)
+            assertEquals(8.0, updated.energyCapacity!!, 0.001)
             assertEquals(1, dao.recordCount(vehicleId))
         } finally {
             db.close()
@@ -49,7 +50,7 @@ class FuelDatabaseInstrumentedTest {
         legacy.close()
 
         val db = Room.databaseBuilder(context, FuelDatabase::class.java, databaseName)
-            .addMigrations(FuelDatabase.MIGRATION_1_2)
+            .addMigrations(FuelDatabase.MIGRATION_1_2, FuelDatabase.MIGRATION_2_3)
             .build()
         try {
             val vehicle = db.dao().vehiclesOnce().single()
@@ -58,9 +59,44 @@ class FuelDatabaseInstrumentedTest {
             assertEquals("旧燃油车", vehicle.name)
             assertEquals(123L, vehicle.createdAt)
             assertEquals(EnergyType.FUEL, vehicle.energyType)
+            assertNull(vehicle.energyCapacity)
             assertEquals(9L, record.id)
             assertEquals("95", record.fuelGrade)
             assertEquals(6.0, record.liters, 0.001)
+        } finally {
+            db.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test fun migrationFromVersionTwoAddsNullCapacityWithoutChangingVehiclesOrRecords() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val databaseName = "fuel-migration-v2-${System.nanoTime()}.db"
+        context.deleteDatabase(databaseName)
+        val legacy = context.openOrCreateDatabase(databaseName, Context.MODE_PRIVATE, null)
+        legacy.execSQL("CREATE TABLE vehicles (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT NOT NULL, createdAt INTEGER NOT NULL, energyType TEXT NOT NULL DEFAULT 'FUEL')")
+        legacy.execSQL("CREATE TABLE fuel_records (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, vehicleId INTEGER NOT NULL, odometerKm REAL NOT NULL, fuelGrade TEXT NOT NULL, pricePerLiter REAL NOT NULL, amountPaid REAL NOT NULL, liters REAL NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY(vehicleId) REFERENCES vehicles(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+        legacy.execSQL("CREATE INDEX index_fuel_records_vehicleId ON fuel_records(vehicleId)")
+        legacy.execSQL("INSERT INTO vehicles(id, name, createdAt, energyType) VALUES(11, '旧电动车', 321, 'ELECTRIC')")
+        legacy.execSQL("INSERT INTO fuel_records(id, vehicleId, odometerKm, fuelGrade, pricePerLiter, amountPaid, liters, timestamp) VALUES(12, 11, 2000, 'HOME', 0.5, 20, 40, 654)")
+        legacy.version = 2
+        legacy.close()
+
+        val db = Room.databaseBuilder(context, FuelDatabase::class.java, databaseName)
+            .addMigrations(FuelDatabase.MIGRATION_2_3)
+            .build()
+        try {
+            val vehicle = db.dao().vehiclesOnce().single()
+            val record = db.dao().recordsOnce(vehicle.id).single()
+            assertEquals(11L, vehicle.id)
+            assertEquals("旧电动车", vehicle.name)
+            assertEquals(321L, vehicle.createdAt)
+            assertEquals(EnergyType.ELECTRIC, vehicle.energyType)
+            assertNull(vehicle.energyCapacity)
+            assertEquals(12L, record.id)
+            assertEquals(11L, record.vehicleId)
+            assertEquals("HOME", record.fuelGrade)
+            assertEquals(40.0, record.liters, 0.001)
         } finally {
             db.close()
             context.deleteDatabase(databaseName)
@@ -73,15 +109,16 @@ class FuelDatabaseInstrumentedTest {
         try {
             val dao = db.dao()
             val vehicleId = dao.insertVehicle(Vehicle(name = "空车", energyType = EnergyType.FUEL))
-            assertEquals(1, dao.updateVehicleInfo(vehicleId, "空车", EnergyType.ELECTRIC))
+            assertEquals(1, dao.updateVehicleInfo(vehicleId, "空车", EnergyType.ELECTRIC, 60.0))
             assertEquals(EnergyType.ELECTRIC, dao.vehicleOnce(vehicleId)!!.energyType)
             dao.insertRecord(FuelRecord(vehicleId = vehicleId, odometerKm = 100.0, fuelGrade = "HOME", pricePerLiter = 0.55, amountPaid = 5.5, liters = 10.0))
-            assertEquals(0, dao.updateVehicleInfo(vehicleId, "尝试改回", EnergyType.FUEL))
+            assertEquals(0, dao.updateVehicleInfo(vehicleId, "尝试改回", EnergyType.FUEL, 8.0))
             val locked = dao.vehicleOnce(vehicleId)!!
             assertEquals("空车", locked.name)
             assertEquals(EnergyType.ELECTRIC, locked.energyType)
-            assertEquals(1, dao.updateVehicleInfo(vehicleId, "只改名称", EnergyType.ELECTRIC))
+            assertEquals(1, dao.updateVehicleInfo(vehicleId, "只改名称", EnergyType.ELECTRIC, 58.5))
             assertEquals("只改名称", dao.vehicleOnce(vehicleId)!!.name)
+            assertEquals(58.5, dao.vehicleOnce(vehicleId)!!.energyCapacity!!, 0.001)
         } finally {
             db.close()
         }

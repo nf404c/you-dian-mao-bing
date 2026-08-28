@@ -24,7 +24,8 @@ data class Vehicle(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(defaultValue = "'FUEL'") val energyType: EnergyType = EnergyType.FUEL
+    @ColumnInfo(defaultValue = "'FUEL'") val energyType: EnergyType = EnergyType.FUEL,
+    @ColumnInfo(defaultValue = "NULL") val energyCapacity: Double? = null
 )
 
 @Entity(
@@ -56,13 +57,18 @@ interface FuelDao {
     @Insert suspend fun insertVehicle(vehicle: Vehicle): Long
     @Query(
         """UPDATE vehicles
-           SET name = :name, energyType = :energyType
+           SET name = :name, energyType = :energyType, energyCapacity = :energyCapacity
            WHERE id = :id
              AND (energyType = :energyType OR NOT EXISTS (
                  SELECT 1 FROM fuel_records WHERE vehicleId = :id LIMIT 1
              ))"""
     )
-    suspend fun updateVehicleInfo(id: Long, name: String, energyType: EnergyType): Int
+    suspend fun updateVehicleInfo(
+        id: Long,
+        name: String,
+        energyType: EnergyType,
+        energyCapacity: Double?
+    ): Int
     @Query("DELETE FROM vehicles WHERE id = :id") suspend fun deleteVehicle(id: Long)
 
     @Query("SELECT * FROM fuel_records WHERE vehicleId = :vehicleId ORDER BY timestamp ASC, id ASC")
@@ -84,7 +90,7 @@ interface FuelDao {
     @Query("DELETE FROM fuel_records WHERE id = :id") suspend fun deleteRecord(id: Long)
 }
 
-@Database(entities = [Vehicle::class, FuelRecord::class], version = 2, exportSchema = false)
+@Database(entities = [Vehicle::class, FuelRecord::class], version = 3, exportSchema = false)
 @TypeConverters(EnergyTypeConverters::class)
 abstract class FuelDatabase : RoomDatabase() {
     abstract fun dao(): FuelDao
@@ -99,8 +105,16 @@ abstract class FuelDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE vehicles ADD COLUMN energyCapacity REAL DEFAULT NULL"
+                )
+            }
+        }
+
         fun create(context: Context): FuelDatabase = Room.databaseBuilder(
             context, FuelDatabase::class.java, "fuel-log.db"
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     }
 }

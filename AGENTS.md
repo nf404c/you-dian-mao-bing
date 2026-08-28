@@ -3,7 +3,7 @@
 ## 范围与技术基线
 
 - 这是离线 Android 加油记录 App（Compose + Material 3 + Room），正式应用名称为「油电猫饼」，包名 `com.fuellog.app`，最低 API 26、目标/编译 API 35、Java/Kotlin 17。
-- 当前正式版本为 `versionName 2.0.3`、`versionCode 25`。每次正式功能发布必须递增 `versionCode`，不得降低；车辆页版本展示继续读取 `BuildConfig.VERSION_NAME`。任何准备生成并保留为正式 Release APK 的代码或可见 UI 修改，无论大小，都必须使用新的版本号和更高的 `versionCode`；小修使用 patch 递增，新增功能使用 minor 递增。
+- 当前正式版本为 `versionName 2.1.0`、`versionCode 26`。每次正式功能发布必须递增 `versionCode`，不得降低；车辆页版本展示继续读取 `BuildConfig.VERSION_NAME`。任何准备生成并保留为正式 Release APK 的代码或可见 UI 修改，无论大小，都必须使用新的版本号和更高的 `versionCode`；小修使用 patch 递增，新增功能使用 minor 递增。
 - 仅修改用户明确要求的功能。不要无关重构页面、替换依赖、改变主题/图标/应用名/`applicationId`，或改变既有手势与动画。
 - 主页为四方向导航中心：左滑进入当前车辆统计、右滑进入车辆管理、上滑进入历史记录、下滑进入记一笔；车辆统计右滑、车辆管理左滑、记一笔上滑均返回主页。历史记录普通列表滚动优先，只有列表严格位于顶部后重新明确下拉才返回主页；所有页面均保留系统返回；点击主页当前车辆名称使用弹窗编辑当前车辆。
 - 四个方向目标页均不显示冗余顶部功能标题，功能名称主要由导航过渡提示表达；新增加油记录功能的用户文案统一使用“记一笔”，内部 FuelRecord 等技术命名不变。
@@ -13,7 +13,7 @@
 
 - `fuel-log.db` 是用户数据。禁止清库、重建数据库、按名称删除数据、预置或初始化任何车辆/加油记录。
 - 首次安装必须保持 `Vehicle = 0`、`FuelRecord = 0`；升级必须保留全部历史数据。
-- 当前 Room schema 版本为 2；v1→v2 Migration 给 `vehicles` 新增 `energyType` 并将全部旧 Vehicle 显式迁移为 `FUEL`。没有确凿必要性不得变更实体、表、字段、外键或 schema；若确需变更，先说明兼容方案并提供 migration，不能以 destructive migration 代替。
+- 当前 Room schema 版本为 3；v1→v2 Migration 给 `vehicles` 新增 `energyType` 并将全部旧 Vehicle 显式迁移为 `FUEL`，v2→v3 Migration 给 `vehicles` 新增可空的 `energyCapacity`。没有确凿必要性不得变更实体、表、字段、外键或 schema；若确需变更，先说明兼容方案并提供 migration，不能以 destructive migration 代替。
 - 删除车辆会级联删除其记录；不要改变该行为。车辆按 `createdAt ASC`，记录按 `timestamp ASC, id ASC`，这个稳定排序是业务规则。
 
 ## 记录、日期与校验
@@ -44,6 +44,13 @@
 - 所有记录、近期价格记忆、历史、首页派生值和车辆统计都必须按 Vehicle 严格隔离；切换当前 Vehicle 后必须按其 energyType 重建相关 UI 草稿与语义，不能残留上一辆车的类型或价格。
 - 油耗与电耗使用同构 baseline 算法：第一条记录仅作为里程基准，总平均只累计第 2 条及之后的能源量；累计加油量或累计充电量则包含第一条记录。
 - 车辆统计价格趋势按能源体系分别保持两条独立序列：燃油车为 92 / 95，电动车为家充 / 公共；每类平均参考线仅使用当前图中该类数据。
+
+## 能源容量与续航估算
+
+- Vehicle 可选能源容量按车辆独立保存：FUEL 为油箱容量（L），ELECTRIC 为电池可用容量（kWh）；容量只用于续航估算，不得修改或重新解释历史记录。
+- 续航估算基于当前车辆有效相邻补能区间的真实能耗，每个样本为 `capacity / intervalConsumption × 100`；最多使用时间上最近的 30 个有效样本。
+- 0–2 个有效样本仅显示数据不足，3–5 个仅显示 P50 典型续航，至少 6 个使用 P20 / P50 / P80 对应保守 / 典型 / 理想续航。
+- 续航估算表示历史数据推算的满油或满电续航，不是实时剩余续航，不得使用“还能跑”等实时语义。
 
 ## 版本历史彩蛋
 
