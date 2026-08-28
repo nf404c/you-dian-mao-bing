@@ -31,22 +31,24 @@ android {
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 
     signingConfigs {
-        create("release") {
-            val storePath = releaseSigningProperties.getProperty("storeFile")
-                ?: error("Missing release signing configuration: .release-signing.properties")
-            storeFile = rootProject.file(storePath)
-            storePassword = releaseSigningProperties.getProperty("storePassword")
-                ?: error("Missing release keystore password")
-            keyAlias = releaseSigningProperties.getProperty("keyAlias")
-                ?: error("Missing release key alias")
-            keyPassword = releaseSigningProperties.getProperty("keyPassword")
-                ?: error("Missing release key password")
+        if (releaseSigningPropertiesFile.exists()) {
+            create("release") {
+                val storePath = releaseSigningProperties.getProperty("storeFile")
+                    ?: error("Missing release signing configuration: .release-signing.properties")
+                storeFile = rootProject.file(storePath)
+                storePassword = releaseSigningProperties.getProperty("storePassword")
+                    ?: error("Missing release keystore password")
+                keyAlias = releaseSigningProperties.getProperty("keyAlias")
+                    ?: error("Missing release key alias")
+                keyPassword = releaseSigningProperties.getProperty("keyPassword")
+                    ?: error("Missing release key password")
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             isMinifyEnabled = false
             isShrinkResources = false
         }

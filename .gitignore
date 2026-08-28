@@ -1,20 +1,44 @@
-# Local Android tooling and machine-specific SDK paths
+# Local Android tooling, IDE state, and machine-specific SDK paths.
 .gradle/
 local.properties
 **/build/
+.idea/
+.kotlin/
 .DS_Store
+*.log
+*.tmp
+*.swp
 
 # Never commit release signing assets or their credentials.
 release-signing/
 .release-signing.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
 
 # Rebuildable release distribution artifacts.
 release/
 *.apk
 *.aab
 
-# Local Room databases and hand-made device database backups.
-fuel-log.db
-fuel-log.db-shm
-fuel-log.db-wal
+# Local Room databases, device backups, exports, and audit artifacts.
+*.db
+*.sqlite
+*.sqlite3
+*.db-*
+*.sqlite-*
+*-wal
+*-shm
 phone_db_*/
+data_audit_report.md
+fuel_records_audit.csv
+*_audit.csv
+*_export.csv
+exports/
+backups/
+dumps/
+
+# Local Codex workspace artifacts, when present.
+.codex/
