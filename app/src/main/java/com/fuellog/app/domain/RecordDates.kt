@@ -8,7 +8,19 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
-import kotlin.math.abs
+import java.math.BigDecimal
+
+private fun amountFormulaIsConsistent(price: Double, amount: Double, quantity: Double): Boolean {
+    val p = BigDecimal.valueOf(price)
+    val a = BigDecimal.valueOf(amount)
+    val q = BigDecimal.valueOf(quantity)
+    val error = a.subtract(p.multiply(q)).abs()
+    // Price, quantity and the displayed amount are all rounded to 2 decimals.
+    val allowance = BigDecimal("0.005").multiply(q)
+        .add(BigDecimal("0.005").multiply(p))
+        .add(BigDecimal("0.005"))
+    return error <= maxOf(BigDecimal("0.02"), allowance)
+}
 
 /** Replaces only the local calendar date, preserving the original time of day. */
 fun timestampWithSelectedDate(originalTimestamp: Long, selectedDateMillis: Long): Long {
@@ -40,8 +52,9 @@ fun isFutureLocalDate(timestamp: Long, today: LocalDate = LocalDate.now(ZoneId.s
 
 fun hasStrictlyIncreasingOdometersInTimeOrder(records: List<FuelRecord>): Boolean =
     records.sortedWith(compareBy<FuelRecord> { it.timestamp }.thenBy { it.id })
+        .mapNotNull { it.odometerKm }
         .zipWithNext()
-        .all { (previous, current) -> current.odometerKm > previous.odometerKm }
+        .all { (previous, current) -> current > previous }
 
 fun validateRecordEdit(
     records: List<FuelRecord>,
@@ -51,13 +64,15 @@ fun validateRecordEdit(
     if (RecordEnergyType.fromStorageValue(energyType, updated.fuelGrade) == null) {
         return "补能类型与车辆类型不一致。"
     }
-    val values = listOf(updated.odometerKm, updated.pricePerLiter, updated.amountPaid, updated.liters)
+    val values = listOfNotNull(updated.odometerKm, updated.pricePerLiter, updated.amountPaid, updated.liters)
     if (values.any { !it.isFinite() }) return "请输入有效数字。"
-    if (updated.odometerKm < 0 || updated.pricePerLiter <= 0 || updated.amountPaid < 0 || updated.liters <= 0) {
-        return if (energyType == EnergyType.FUEL) "里程、油价和加油升数必须为有效正数。"
-        else "里程、电价和充电电量必须为有效正数。"
+    if ((updated.odometerKm != null && updated.odometerKm < 0) ||
+        updated.pricePerLiter <= 0 || updated.amountPaid < 0 || updated.liters <= 0
+    ) {
+        return if (energyType == EnergyType.FUEL) "里程不能为负，油价和加油升数必须为有效正数。"
+        else "里程不能为负，电价和充电电量必须为有效正数。"
     }
-    if (abs(updated.amountPaid - updated.pricePerLiter * updated.liters) > 0.02) {
+    if (!amountFormulaIsConsistent(updated.pricePerLiter, updated.amountPaid, updated.liters)) {
         return if (energyType == EnergyType.FUEL) "油价、金额和升数不一致，请检查后再保存。"
         else "电价、金额和电量不一致，请检查后再保存。"
     }
@@ -76,13 +91,15 @@ fun validateNewRecord(
     if (RecordEnergyType.fromStorageValue(energyType, added.fuelGrade) == null) {
         return "补能类型与车辆类型不一致。"
     }
-    val values = listOf(added.odometerKm, added.pricePerLiter, added.amountPaid, added.liters)
+    val values = listOfNotNull(added.odometerKm, added.pricePerLiter, added.amountPaid, added.liters)
     if (values.any { !it.isFinite() }) return "请输入有效数字。"
-    if (added.odometerKm < 0 || added.pricePerLiter <= 0 || added.amountPaid < 0 || added.liters <= 0) {
-        return if (energyType == EnergyType.FUEL) "里程、油价和加油升数必须为有效正数。"
-        else "里程、电价和充电电量必须为有效正数。"
+    if ((added.odometerKm != null && added.odometerKm < 0) ||
+        added.pricePerLiter <= 0 || added.amountPaid < 0 || added.liters <= 0
+    ) {
+        return if (energyType == EnergyType.FUEL) "里程不能为负，油价和加油升数必须为有效正数。"
+        else "里程不能为负，电价和充电电量必须为有效正数。"
     }
-    if (abs(added.amountPaid - added.pricePerLiter * added.liters) > 0.02) {
+    if (!amountFormulaIsConsistent(added.pricePerLiter, added.amountPaid, added.liters)) {
         return if (energyType == EnergyType.FUEL) "油价、金额和升数不一致，请检查后再保存。"
         else "电价、金额和电量不一致，请检查后再保存。"
     }

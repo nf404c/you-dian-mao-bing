@@ -1,6 +1,7 @@
 package com.fuellog.app.domain
 
 import com.fuellog.app.data.FuelRecord
+import com.fuellog.app.data.EnergyType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -17,8 +18,8 @@ class RecordDatesTest {
             set(year, month - 1, day, hour, minute, 20)
         }.timeInMillis
 
-    private fun record(id: Long, km: Double, at: Long) = FuelRecord(
-        id = id, vehicleId = 1, odometerKm = km, fuelGrade = "95",
+    private fun record(id: Long, km: Double?, at: Long, grade: String = "95") = FuelRecord(
+        id = id, vehicleId = 1, odometerKm = km, fuelGrade = grade,
         pricePerLiter = 8.0, amountPaid = 48.0, liters = 6.0, timestamp = at
     )
 
@@ -78,5 +79,33 @@ class RecordDatesTest {
     @Test fun futureLocalDateIsRejected() {
         assertFalse(isFutureLocalDate(timestamp(2026, 8, 28), LocalDate.of(2026, 8, 28)))
         assertTrue(isFutureLocalDate(timestamp(2026, 8, 29), LocalDate.of(2026, 8, 28)))
+    }
+
+    @Test fun unknownOdometerIsValidForNewAndExistingFuelAndElectricRecords() {
+        val at = timestamp(2026, 8, 10)
+        assertNull(validateNewRecord(emptyList(), record(0, null, at), EnergyType.FUEL))
+        val electric = record(1, null, at, "HOME").copy(pricePerLiter = 0.5, amountPaid = 20.0, liters = 40.0)
+        assertNull(validateNewRecord(emptyList(), electric, EnergyType.ELECTRIC))
+        assertNull(validateRecordEdit(listOf(electric), electric, EnergyType.ELECTRIC))
+    }
+
+    @Test fun unknownRecordDoesNotBlockLaterKnownAnchorAndCanLaterBeFilled() {
+        val first = record(1, 3_000.0, timestamp(2026, 8, 1))
+        val unknown = record(2, null, timestamp(2026, 8, 10))
+        val last = record(3, 3_400.0, timestamp(2026, 8, 20))
+        assertNull(validateNewRecord(listOf(first, unknown), last))
+        assertNull(validateRecordEdit(listOf(first, unknown, last), unknown))
+        assertNull(validateRecordEdit(listOf(first, unknown, last), unknown.copy(odometerKm = 3_200.0)))
+        assertEquals(
+            "修改后的日期或里程会导致记录顺序异常，请检查。",
+            validateRecordEdit(listOf(first, unknown, last), unknown.copy(odometerKm = 3_500.0))
+        )
+    }
+
+    @Test fun editingOtherFieldsKeepsExistingRealOdometer() {
+        val original = record(1, 4_000.0, timestamp(2026, 8, 1))
+        val edited = original.copy(pricePerLiter = 8.1, amountPaid = 48.6)
+        assertNull(validateRecordEdit(listOf(original), edited))
+        assertEquals(4_000.0, edited.odometerKm!!, 0.001)
     }
 }

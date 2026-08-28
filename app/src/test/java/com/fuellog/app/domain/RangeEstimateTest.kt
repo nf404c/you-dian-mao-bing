@@ -88,6 +88,17 @@ class RangeEstimateTest {
         assertEquals(400L, electric.typicalKm)
     }
 
+    @Test fun unknownOdometerBreaksBothAdjacentSamplesAndIsNeverBridged() {
+        val records = listOf(
+            record(1, 0.0, 10.0, 1),
+            record(2, 200.0, 10.0, 2),
+            record(3, null, 10.0, 3),
+            record(4, 600.0, 10.0, 4)
+        )
+        val estimate = calculateRangeEstimate(10.0, records) as RangeEstimate.InsufficientData
+        assertEquals(1, estimate.sampleCount)
+    }
+
     private fun recordsForRanges(ranges: List<Double>, capacity: Double = 10.0): List<FuelRecord> {
         var odometer = 0.0
         return buildList {
@@ -99,7 +110,7 @@ class RangeEstimateTest {
         }
     }
 
-    private fun record(id: Long, odometer: Double, energy: Double, timestamp: Long) = FuelRecord(
+    private fun record(id: Long, odometer: Double?, energy: Double, timestamp: Long) = FuelRecord(
         id = id,
         vehicleId = 1,
         odometerKm = odometer,

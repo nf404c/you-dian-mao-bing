@@ -6,7 +6,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EnergySemanticsTest {
-    private fun electricRecord(id: Long, km: Double, kWh: Double, timestamp: Long = id) = FuelRecord(
+    private fun electricRecord(id: Long, km: Double?, kWh: Double, timestamp: Long = id) = FuelRecord(
         id = id,
         vehicleId = 2,
         odometerKm = km,
@@ -52,6 +52,17 @@ class EnergySemanticsTest {
         val calculated = Consumption.calculate(listOf(first, inserted, last))
         assertEquals(15.0, calculated[1].litersPer100Km!!, 0.001)
         assertEquals(20.0, calculated[2].litersPer100Km!!, 0.001)
+    }
+
+    @Test fun electricOverallUsesUnknownOdometerEnergyInsideRealAnchors() {
+        val records = listOf(
+            electricRecord(1, 1_000.0, 30.0),
+            electricRecord(2, null, 12.0),
+            electricRecord(3, 1_300.0, 33.0)
+        )
+        assertEquals((12.0 + 33.0) / 300.0 * 100, Consumption.overall(records)!!, 0.001)
+        assertNull(Consumption.calculate(records)[1].litersPer100Km)
+        assertNull(Consumption.calculate(records)[2].litersPer100Km)
     }
 
     @Test fun recordTypeCannotBeInterpretedAcrossEnergySystems() {

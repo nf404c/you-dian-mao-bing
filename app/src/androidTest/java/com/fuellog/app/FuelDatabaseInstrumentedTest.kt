@@ -50,7 +50,7 @@ class FuelDatabaseInstrumentedTest {
         legacy.close()
 
         val db = Room.databaseBuilder(context, FuelDatabase::class.java, databaseName)
-            .addMigrations(FuelDatabase.MIGRATION_1_2, FuelDatabase.MIGRATION_2_3)
+            .addMigrations(FuelDatabase.MIGRATION_1_2, FuelDatabase.MIGRATION_2_3, FuelDatabase.MIGRATION_3_4)
             .build()
         try {
             val vehicle = db.dao().vehiclesOnce().single()
@@ -83,7 +83,7 @@ class FuelDatabaseInstrumentedTest {
         legacy.close()
 
         val db = Room.databaseBuilder(context, FuelDatabase::class.java, databaseName)
-            .addMigrations(FuelDatabase.MIGRATION_2_3)
+            .addMigrations(FuelDatabase.MIGRATION_2_3, FuelDatabase.MIGRATION_3_4)
             .build()
         try {
             val vehicle = db.dao().vehiclesOnce().single()
@@ -157,7 +157,7 @@ class FuelDatabaseInstrumentedTest {
             val id = dao.insertRecord(FuelRecord(vehicleId = vehicle, odometerKm = 100.0, fuelGrade = "95", pricePerLiter = 8.0, amountPaid = 48.0, liters = 6.0, timestamp = 10))
             dao.updateRecord(FuelRecord(id = id, vehicleId = vehicle, odometerKm = 120.0, fuelGrade = "92", pricePerLiter = 7.5, amountPaid = 45.0, liters = 6.0, timestamp = 20))
             val updated = dao.records(vehicle).first().single()
-            assertEquals(120.0, updated.odometerKm, 0.001)
+            assertEquals(120.0, updated.odometerKm!!, 0.001)
             assertEquals("92", updated.fuelGrade)
             assertEquals(7.5, updated.pricePerLiter, 0.001)
             assertEquals(45.0, updated.amountPaid, 0.001)

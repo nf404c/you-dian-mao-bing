@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VehicleStatisticsTest {
-    private fun record(id: Long, km: Double, grade: String = "95", price: Double = 7.5, liters: Double = 10.0) = FuelRecord(
+    private fun record(id: Long, km: Double?, grade: String = "95", price: Double = 7.5, liters: Double = 10.0) = FuelRecord(
         id = id, vehicleId = 1, odometerKm = km, fuelGrade = grade, pricePerLiter = price,
         amountPaid = price * liters, liters = liters, timestamp = id
     )
@@ -53,7 +53,7 @@ class VehicleStatisticsTest {
     @Test fun intervalKilometersUseMedianAndIgnoreOnlyNonPositiveGaps() {
         fun recordsFromIntervals(intervals: List<Double>) = buildList {
             add(record(1, 0.0))
-            intervals.forEachIndexed { index, distance -> add(record(index + 2L, last().odometerKm + distance)) }
+            intervals.forEachIndexed { index, distance -> add(record(index + 2L, last().odometerKm!! + distance)) }
         }
         // 300, 305, 315, 320, 620 -> median 315.
         assertEquals(315L, averageRefuelIntervalKm(recordsFromIntervals(listOf(300.0, 305.0, 315.0, 320.0, 620.0))))
@@ -104,5 +104,36 @@ class VehicleStatisticsTest {
         val averages = averagePriceByGrade(series)
         assertEquals(0.60, averages.getValue("HOME"), 0.001)
         assertEquals(1.38, averages.getValue("PUBLIC"), 0.001)
+    }
+
+    @Test fun unknownOdometersKeepTotalsPricesCountsAndDateIntervalsButNotMileageIntervals() {
+        fun day(offset: Long) = java.time.LocalDate.of(2026, 8, 1).plusDays(offset)
+            .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val records = listOf(
+            record(1, 1_000.0, liters = 5.0).copy(timestamp = day(0)),
+            record(2, null, grade = "92", price = 8.0, liters = 6.0).copy(timestamp = day(0)),
+            record(3, 1_200.0, liters = 7.0).copy(timestamp = day(5)),
+            record(4, 1_400.0, grade = "92", price = 8.0, liters = 8.0).copy(timestamp = day(11))
+        )
+        val result = calculateVehicleStatistics(records)
+        assertEquals(400.0, result.recordedDistanceKm!!, 0.001)
+        assertEquals(26.0, result.totalLiters, 0.001)
+        assertEquals(202.0, result.totalAmount, 0.001)
+        assertEquals(4, result.recordCount)
+        assertEquals(5L, result.averageIntervalDays)
+        assertEquals(200L, result.averageIntervalKm)
+        assertEquals(listOf(2L, 4L), result.recentPriceSeries.getValue("92").map { it.record.id })
+    }
+
+    @Test fun allUnknownOdometersStillProduceNonMileageStatisticsForBothEnergySystems() {
+        listOf("95", "HOME").forEach { grade ->
+            val records = listOf(record(1, null, grade, 1.0, 5.0), record(2, null, grade, 1.0, 7.0))
+            val result = calculateVehicleStatistics(records)
+            assertNull(result.recordedDistanceKm)
+            assertNull(result.averageIntervalKm)
+            assertEquals(12.0, result.totalLiters, 0.001)
+            assertEquals(12.0, result.totalAmount, 0.001)
+            assertEquals(2, result.recordCount)
+        }
     }
 }

@@ -41,7 +41,7 @@ data class Vehicle(
 data class FuelRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val vehicleId: Long,
-    val odometerKm: Double,
+    val odometerKm: Double?,
     val fuelGrade: String,
     val pricePerLiter: Double,
     val amountPaid: Double,
@@ -90,7 +90,7 @@ interface FuelDao {
     @Query("DELETE FROM fuel_records WHERE id = :id") suspend fun deleteRecord(id: Long)
 }
 
-@Database(entities = [Vehicle::class, FuelRecord::class], version = 3, exportSchema = false)
+@Database(entities = [Vehicle::class, FuelRecord::class], version = 4, exportSchema = false)
 @TypeConverters(EnergyTypeConverters::class)
 abstract class FuelDatabase : RoomDatabase() {
     abstract fun dao(): FuelDao
@@ -113,8 +113,37 @@ abstract class FuelDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `fuel_records_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `vehicleId` INTEGER NOT NULL,
+                        `odometerKm` REAL,
+                        `fuelGrade` TEXT NOT NULL,
+                        `pricePerLiter` REAL NOT NULL,
+                        `amountPaid` REAL NOT NULL,
+                        `liters` REAL NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        FOREIGN KEY(`vehicleId`) REFERENCES `vehicles`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )""".trimIndent()
+                )
+                database.execSQL(
+                    """INSERT INTO `fuel_records_new`
+                        (`id`, `vehicleId`, `odometerKm`, `fuelGrade`, `pricePerLiter`, `amountPaid`, `liters`, `timestamp`)
+                        SELECT `id`, `vehicleId`, `odometerKm`, `fuelGrade`, `pricePerLiter`, `amountPaid`, `liters`, `timestamp`
+                        FROM `fuel_records`""".trimIndent()
+                )
+                database.execSQL("DROP TABLE `fuel_records`")
+                database.execSQL("ALTER TABLE `fuel_records_new` RENAME TO `fuel_records`")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_fuel_records_vehicleId` ON `fuel_records` (`vehicleId`)"
+                )
+            }
+        }
+
         fun create(context: Context): FuelDatabase = Room.databaseBuilder(
             context, FuelDatabase::class.java, "fuel-log.db"
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 }

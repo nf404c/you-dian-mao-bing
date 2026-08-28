@@ -443,7 +443,7 @@ private fun NavHostController.navigateOnce(route: String) {
                 last?.let { Text(date(it.timestamp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(last?.odometerKm?.let { "${number(it)} km" } ?: "暂无记录", fontSize = 26.sp, fontWeight = FontWeight.Medium)
+                Text(if (last == null) "暂无记录" else odometerDisplay(last.odometerKm), fontSize = 26.sp, fontWeight = FontWeight.Medium)
                 Text(
                     latest?.litersPer100Km?.let { "${two(it)} ${energyType.consumptionUnit()}" }
                         ?: if (energyType == EnergyType.FUEL) "暂无区间油耗" else "暂无区间电耗",
@@ -462,7 +462,7 @@ private fun NavHostController.navigateOnce(route: String) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    last?.let { record -> daysSinceDate(record.timestamp, today).let { days -> if (days == 0L) "今天" else "距上次 $days 天" } } ?: "",
+                    last?.let { record -> homeRelativeDateLabel(record.timestamp, today) } ?: "",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -848,16 +848,20 @@ private fun vehicleChangeSummary(
         }
     }
     NumberField(km, { km = it; error = null }, "当前总里程", "km")
+    Text("不知道可留空", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     NumberField(price, { userEdit(FuelField.PRICE, it) }, if (energyType == EnergyType.FUEL) "当前油价" else "当前电价", energyType.priceUnit())
     NumberField(amount, { userEdit(FuelField.AMOUNT, it) }, if (energyType == EnergyType.FUEL) "本次加油金额" else "本次充电金额", "元")
     NumberField(liters, { userEdit(FuelField.LITERS, it) }, if (energyType == EnergyType.FUEL) "本次加油升数" else "本次充电电量", energyType.quantityUnit())
     Spacer(Modifier.height(12.dp))
     val currentKm = km.toDoubleOrNull()
     val currentLiters = liters.toDoubleOrNull()
-    val previousKm = state.records.lastOrNull()?.record?.odometerKm
+    val previousRecord = state.records.lastOrNull()?.record
+    val previousKm = previousRecord?.odometerKm
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (previousKm == null) Text("首次记录，将作为后续${if (energyType == EnergyType.FUEL) "油耗" else "电耗"}计算基准。")
+            if (previousRecord == null && currentKm != null) Text("首次里程记录，将作为后续${if (energyType == EnergyType.FUEL) "油耗" else "电耗"}计算基准。")
+            else if (previousRecord == null) Text("里程留空后，本次不会作为里程计算基准。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else if (previousKm == null) Text("上一条里程未知，本次不生成单次区间${if (energyType == EnergyType.FUEL) "油耗" else "电耗"}。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             else if (currentKm != null && currentLiters != null && currentKm > previousKm) {
                 val distance = currentKm - previousKm
                 Text("本次行驶  ${number(distance)} km")
@@ -880,10 +884,12 @@ private fun vehicleChangeSummary(
     error?.let { Spacer(Modifier.height(8.dp)); Text(it, color = MaterialTheme.colorScheme.error) }
     Spacer(Modifier.height(12.dp))
     Button(onClick = {
-        val values = listOf(km, price, amount, liters).map { it.toDoubleOrNull() }
-        if (values.any { it == null }) error = "请完整填写所有字段。"
+        val parsedOdometer = km.takeUnless { it.isBlank() }?.toDoubleOrNull()
+        val values = listOf(price, amount, liters).map { it.toDoubleOrNull() }
+        if (km.isNotBlank() && parsedOdometer == null) error = "请输入有效里程。"
+        else if (values.any { it == null }) error = "请完整填写油价、金额和${if (energyType == EnergyType.FUEL) "升数" else "电量"}。"
         else scope.launch {
-            error = vm.saveRecord(values[0]!!, grade, values[1]!!, values[2]!!, values[3]!!, selectedTimestamp)
+            error = vm.saveRecord(parsedOdometer, grade, values[0]!!, values[1]!!, values[2]!!, selectedTimestamp)
             if (error == null) {
                 saved = true
                 delay(180)
@@ -1117,7 +1123,7 @@ private data class RecordEditRequest(val original: FuelRecord, val edited: FuelR
                                 ) {
                                     Text(date(item.record.timestamp), fontSize = 15.sp)
                                     Text(
-                                        "${number(item.record.odometerKm)} km · ${recordTypeDisplayName(energyType, item.record.fuelGrade)}${if (energyType == EnergyType.FUEL) "号" else ""}",
+                                        "${odometerDisplay(item.record.odometerKm)} · ${recordTypeDisplayName(energyType, item.record.fuelGrade)}${if (energyType == EnergyType.FUEL) "号" else ""}",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 15.sp
                                     )
@@ -1279,11 +1285,15 @@ private data class RecordEditRequest(val original: FuelRecord, val edited: FuelR
 ) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(date(item.record.timestamp), fontWeight = FontWeight.SemiBold)
-        Text(item.daysSincePrevious?.let { if (it == 0L) "当天" else "距上次 ${it} 天" } ?: "首次记录", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(historyIntervalLabel(item.daysSincePrevious, item.distanceKm), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text("${number(item.record.odometerKm)} km")
-        Text(item.litersPer100Km?.let { "${two(it)} ${energyType.consumptionUnit()}" } ?: "基准记录", fontWeight = FontWeight.Medium, color = if (item.litersPer100Km == null) Accent else MaterialTheme.colorScheme.onSurface)
+        Text(
+            odometerDisplay(item.record.odometerKm),
+            color = if (item.record.odometerKm == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+        )
+        val emptyConsumption = if (item.daysSincePrevious == null && item.record.odometerKm != null) "基准记录" else "—"
+        Text(item.litersPer100Km?.let { "${two(it)} ${energyType.consumptionUnit()}" } ?: emptyConsumption, fontWeight = FontWeight.Medium, color = if (item.litersPer100Km == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
     }
     Text(
         "${recordTypeDisplayName(energyType, item.record.fuelGrade)}${if (energyType == EnergyType.FUEL) "号" else ""} · ¥${two(item.record.pricePerLiter)}${energyType.priceDisplayUnit()} · ${two(item.record.liters)} ${energyType.quantityUnit()} · ¥${two(item.record.amountPaid)}",
@@ -1306,7 +1316,7 @@ private data class RecordEditRequest(val original: FuelRecord, val edited: FuelR
     val original = item.record
     var selectedDateMillis by rememberSaveable(original.id) { mutableLongStateOf(datePickerStartMillis(original.timestamp)) }
     var grade by rememberSaveable(original.id) { mutableStateOf(original.fuelGrade) }
-    var odometer by rememberSaveable(original.id) { mutableStateOf(plain(original.odometerKm)) }
+    var odometer by rememberSaveable(original.id) { mutableStateOf(original.odometerKm?.let(::plain) ?: "") }
     var price by rememberSaveable(original.id) { mutableStateOf(plain(original.pricePerLiter)) }
     var amount by rememberSaveable(original.id) { mutableStateOf(plain(original.amountPaid)) }
     var liters by rememberSaveable(original.id) { mutableStateOf(plain(original.liters)) }
@@ -1347,6 +1357,7 @@ private data class RecordEditRequest(val original: FuelRecord, val edited: FuelR
             Text("日期  ${date(editedDateTimestamp)}")
         }
         NumberField(odometer, { odometer = it; clearError() }, "当前总里程", "km")
+        Text("不知道可留空", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(if (energyType == EnergyType.FUEL) "汽油标号" else "充电类型", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             RecordEnergyType.forVehicle(energyType).forEach { recordType ->
@@ -1358,16 +1369,18 @@ private data class RecordEditRequest(val original: FuelRecord, val edited: FuelR
         NumberField(liters, { userEdit(FuelField.LITERS, it) }, if (energyType == EnergyType.FUEL) "本次加油升数" else "本次充电电量", energyType.quantityUnit())
         (localError ?: externalError)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = {
-            val parsedOdometer = odometer.toDoubleOrNull()
+            val parsedOdometer = odometer.takeUnless { it.isBlank() }?.toDoubleOrNull()
             val parsedPrice = price.toDoubleOrNull()
             val parsedAmount = amount.toDoubleOrNull()
             val parsedLiters = liters.toDoubleOrNull()
-            if (listOf(parsedOdometer, parsedPrice, parsedAmount, parsedLiters).any { it == null }) {
-                localError = "请完整填写所有字段。"
+            if (odometer.isNotBlank() && parsedOdometer == null) {
+                localError = "请输入有效里程。"
+            } else if (listOf(parsedPrice, parsedAmount, parsedLiters).any { it == null }) {
+                localError = "请完整填写油价、金额和${if (energyType == EnergyType.FUEL) "升数" else "电量"}。"
             } else {
                 val edited = original.copy(
                     timestamp = editedDateTimestamp,
-                    odometerKm = parsedOdometer!!,
+                    odometerKm = parsedOdometer,
                     fuelGrade = grade,
                     pricePerLiter = parsedPrice!!,
                     amountPaid = parsedAmount!!,
@@ -1402,7 +1415,7 @@ private data class RecordEditRequest(val original: FuelRecord, val edited: FuelR
 private fun recordChangeSummary(original: FuelRecord, edited: FuelRecord, energyType: EnergyType): String {
     val changes = buildList {
         if (date(original.timestamp) != date(edited.timestamp)) add("日期：${date(original.timestamp)} → ${date(edited.timestamp)}")
-        if (original.odometerKm != edited.odometerKm) add("里程：${number(original.odometerKm)} → ${number(edited.odometerKm)} km")
+        if (original.odometerKm != edited.odometerKm) add("里程：${odometerValue(original.odometerKm)} → ${odometerValue(edited.odometerKm)}")
         if (original.fuelGrade != edited.fuelGrade) add(
             "${if (energyType == EnergyType.FUEL) "油号" else "充电类型"}：${recordTypeDisplayName(energyType, original.fuelGrade)} → ${recordTypeDisplayName(energyType, edited.fuelGrade)}"
         )
@@ -1746,6 +1759,9 @@ private fun capacitySummary(vehicle: Vehicle): String {
 private data class VersionHistory(val version: String, val changes: List<String>)
 
 private val versionHistory = listOf(
+    VersionHistory("v2.2.1", listOf("优化主页时间提示与历史记录间隔里程展示")),
+    VersionHistory("v2.2.0", listOf("支持补录里程未知的真实加油/充电记录，并按真实里程锚点完善统计")),
+    VersionHistory("v2.1.1", listOf("修复记一笔三值联动结果因显示舍入误差无法保存的问题")),
     VersionHistory("v2.1.0", listOf("新增油箱/电池容量与续航估算功能")),
     VersionHistory("v2.0.3", listOf("优化平均补能间隔统计，降低偶发漏记对结果的影响")),
     VersionHistory("v2.0.2", listOf("品牌名称更新为油电猫饼，并启用全新应用图标")),
@@ -1806,6 +1822,27 @@ private fun number(value: Double) = DecimalFormat("#,##0.##").format(value)
 private fun plain(value: Double) = DecimalFormat("0.##").format(value)
 private fun one(value: Double) = DecimalFormat("0.0").format(value)
 private fun two(value: Double) = DecimalFormat("0.00").format(value)
+private fun odometerDisplay(value: Double?) = value?.let { "${number(it)} km" } ?: "里程未知"
+private fun odometerValue(value: Double?) = value?.let { "${number(it)} km" } ?: "未知"
+
+internal fun homeRelativeDateLabel(timestamp: Long, today: java.time.LocalDate): String {
+    val days = daysSinceDate(timestamp, today).coerceAtLeast(0)
+    return when (days) {
+        0L -> "今天"
+        1L -> "昨天"
+        else -> "${days}天前"
+    }
+}
+
+internal fun historyIntervalLabel(daysSincePrevious: Long?, distanceKm: Double?): String {
+    if (daysSincePrevious == null) return "首次记录"
+    val days = daysSincePrevious.coerceAtLeast(0)
+    val distance = distanceKm?.takeIf { it.isFinite() && it > 0 }
+    return buildString {
+        append("间隔 ${days}天")
+        distance?.let { append(" · ${number(it)}km") }
+    }
+}
 private fun date(timestamp: Long) = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(Date(timestamp))
 private fun Vehicle.displayNameWithEnergy() = "$name ${energyType.emoji}"
 

@@ -19,8 +19,11 @@ data class VehicleStatistics(
 /** Statistics are derived only from one vehicle's records in chronological business order. */
 fun calculateVehicleStatistics(records: List<FuelRecord>): VehicleStatistics {
     val ordered = records.sortedWith(compareBy<FuelRecord> { it.timestamp }.thenBy { it.id })
-    val distance = ordered.takeIf { it.size >= 2 }
-        ?.let { it.last().odometerKm - it.first().odometerKm }
+    val knownOdometers = ordered.mapNotNull { record ->
+        record.odometerKm?.takeIf { it.isFinite() && it >= 0 }
+    }
+    val distance = knownOdometers.takeIf { it.size >= 2 }
+        ?.let { it.last() - it.first() }
         ?.takeIf { it.isFinite() && it > 0 }
     val recent = ordered.takeLast(10)
     return VehicleStatistics(
@@ -51,7 +54,14 @@ fun averageRefuelIntervalKm(records: List<FuelRecord>): Long? {
     val ordered = records.sortedWith(compareBy<FuelRecord> { it.timestamp }.thenBy { it.id })
     if (ordered.size < 2) return null
     val intervals = ordered.zipWithNext()
-        .map { (previous, current) -> current.odometerKm - previous.odometerKm }
+        .mapNotNull { (previous, current) ->
+            val previousKm = previous.odometerKm
+            val currentKm = current.odometerKm
+            if (previousKm == null || currentKm == null ||
+                !previousKm.isFinite() || previousKm < 0 ||
+                !currentKm.isFinite() || currentKm < 0
+            ) null else currentKm - previousKm
+        }
         .filter { it.isFinite() && it > 0 }
     return median(intervals)?.roundToLong()
 }

@@ -21,8 +21,8 @@ android {
         applicationId = "com.fuellog.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "2.1.0"
+        versionCode = 29
+        versionName = "2.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }

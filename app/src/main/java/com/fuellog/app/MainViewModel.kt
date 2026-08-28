@@ -103,7 +103,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun recordCount(vehicleId: Long): Int = dao.recordCount(vehicleId)
 
     suspend fun saveRecord(
-        odometer: Double, grade: String, price: Double, amount: Double, liters: Double, timestamp: Long
+        odometer: Double?, grade: String, price: Double, amount: Double, liters: Double, timestamp: Long
     ): String? {
         val selectedVehicle = state.value.activeVehicle ?: return "请先添加车辆。"
         val vehicle = dao.vehicleOnce(selectedVehicle.id) ?: return "车辆不存在。"
