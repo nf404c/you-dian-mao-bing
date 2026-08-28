@@ -1,0 +1,20 @@
+# Local Android tooling and machine-specific SDK paths
+.gradle/
+local.properties
+**/build/
+.DS_Store
+
+# Never commit release signing assets or their credentials.
+release-signing/
+.release-signing.properties
+
+# Rebuildable release distribution artifacts.
+release/
+*.apk
+*.aab
+
+# Local Room databases and hand-made device database backups.
+fuel-log.db
+fuel-log.db-shm
+fuel-log.db-wal
+phone_db_*/
